@@ -210,7 +210,7 @@ export function HomePage() {
             className="flex items-center gap-2 text-sm text-white/60 hover:text-orange-500 transition-colors">
             <span>📢</span> Official Channel
           </a>
-          <a href="https://chat.whatsapp.com/JsKmQMpECJMHyxucHquF15" target="_blank" rel="noreferrer"
+          <a href="https://chat.whatsapp.com/J5vygpstqaUAY71gajwDX9?s=cl&p=a&mlu=4&ilr=4" target="_blank" rel="noreferrer"
             className="flex items-center gap-2 text-sm text-white/60 hover:text-orange-500 transition-colors">
             <span>👥</span> Support Group
           </a>

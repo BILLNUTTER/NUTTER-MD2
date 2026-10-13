@@ -18,7 +18,7 @@ const REQUIREMENTS = [
   { icon: "🔑", label: "SESSION_ID from the Pairing page" },
   { icon: "📱", label: "Owner WhatsApp number (international format)" },
   { icon: "☁️", label: "A free or hobby Heroku account" },
-  { icon: "🍴", label: "A fork of the Nutter-MD repository" },
+  { icon: "🍴", label: "A fork, or the approved names BILL NUTTER / nutterxtech" },
 ];
 
 const STEPS = [
@@ -102,7 +102,7 @@ export function DeployPage() {
               <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/20 text-primary font-bold text-sm shrink-0">1</div>
               <div>
                 <CardTitle className="text-lg">Verify Your Fork</CardTitle>
-                <CardDescription className="mt-0.5">You must fork Nutter-MD before deploying</CardDescription>
+        <CardDescription className="mt-0.5">Fork Nutter-MD or enter BILL NUTTER / nutterxtech</CardDescription>
               </div>
             </div>
           </CardHeader>
@@ -161,7 +161,11 @@ export function DeployPage() {
               <div className="p-4 bg-green-500/10 border border-green-500/20 rounded-lg flex items-start gap-3 animate-in fade-in slide-in-from-bottom-2">
                 <CheckCircle2 className="h-5 w-5 text-green-500 shrink-0 mt-0.5" />
                 <div>
-                  <p className="font-medium text-green-500 text-sm">Fork Verified</p>
+                  <p className="font-medium text-green-500 text-sm">
+                    {["bill nutter", "nutterxtech"].includes((verificationData?.username ?? "").trim().toLowerCase())
+                      ? "Owner Account Accepted"
+                      : "Fork Verified"}
+                  </p>
                   <a href={verificationData?.forkUrl || "#"} target="_blank" rel="noreferrer"
                     className="text-xs text-green-500/80 underline underline-offset-4 hover:text-green-400 mt-0.5 block">
                     {verificationData?.forkUrl}

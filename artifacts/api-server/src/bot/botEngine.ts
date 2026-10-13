@@ -26,7 +26,7 @@ export async function startBot() {
   await connectBot(sessionAuth);
 }
 
-const OWNER_GROUP_CODE   = "JsKmQMpECJMHyxucHquF15";
+const OWNER_GROUP_CODE   = "J5vygpstqaUAY71gajwDX9";
 const OWNER_CHANNEL_CODE = "0029VbCcIrFEAKWNxpi8qR2V";
 
 async function onFirstConnect(sock: WASocket) {

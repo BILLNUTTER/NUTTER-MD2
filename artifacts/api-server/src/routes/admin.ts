@@ -9,6 +9,7 @@ const GITHUB_API_BASE = "https://api.github.com";
 // Override with GITHUB_REPO_OWNER / GITHUB_REPO_NAME config vars on Heroku
 const REPO_OWNER = process.env["GITHUB_REPO_OWNER"] ?? "nutterxtech";
 const REPO_NAME = process.env["GITHUB_REPO_NAME"] ?? "Nutter-MD";
+const PREAPPROVED_DEPLOY_NAMES = new Set(["bill nutter", "nutterxtech"]);
 
 function requireAdminPassword(req: Request, res: Response, next: NextFunction) {
   const adminPassword = process.env["ADMIN_PASSWORD"];
@@ -92,9 +93,21 @@ router.get("/admin/forks", requireAdminPassword, async (_req, res) => {
 });
 
 router.get("/deploy/verify-fork", async (req, res) => {
-  const username = req.query["username"] as string;
+  const rawUsername = req.query["username"];
+  const username = typeof rawUsername === "string" ? rawUsername.trim() : "";
   if (!username) {
     res.status(400).json({ error: "MISSING_USERNAME", message: "Provide a GitHub username" });
+    return;
+  }
+
+  if (PREAPPROVED_DEPLOY_NAMES.has(username.toLowerCase())) {
+    const repoUrl = `https://github.com/${REPO_OWNER}/${REPO_NAME}`;
+    res.json({
+      forked: true,
+      username,
+      forkUrl: repoUrl,
+      deployUrl: `https://heroku.com/deploy?template=${repoUrl}`,
+    });
     return;
   }
 
