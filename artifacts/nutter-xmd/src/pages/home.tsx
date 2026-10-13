@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -51,6 +51,7 @@ export function HomePage() {
   const [qrActive, setQrActive] = useState(false);
   const [pairCodePending, setPairCodePending] = useState(false);
   const [pairSessionActive, setPairSessionActive] = useState(false);
+  const promptedPairCodes = useRef(new Set<string>());
 
   const [sessionResult, setSessionResult] = useState<SessionResult | null>(null);
   const [isFetchingSession, setIsFetchingSession] = useState(false);
@@ -99,11 +100,17 @@ export function HomePage() {
           return;
         }
         if (data.pairCode && data.status === "pair_code_ready") {
-          setPairCode((prev) => {
-            if (!prev) toast({ title: "Pair code ready!", description: "Enter it in WhatsApp → Linked Devices → Link a Device → Link with phone number." });
-            else if (prev !== data.pairCode) toast({ title: "Code refreshed!", description: "The previous code expired. Enter this new code quickly." });
-            return data.pairCode;
-          });
+          if (!promptedPairCodes.current.has(data.pairCode)) {
+            const isRefresh = promptedPairCodes.current.size > 0;
+            promptedPairCodes.current.add(data.pairCode);
+            toast({
+              title: isRefresh ? "Code refreshed!" : "Pair code ready!",
+              description: isRefresh
+                ? "The previous code expired. Enter this new code quickly."
+                : "Enter it in WhatsApp → Linked Devices → Link a Device → Link with phone number.",
+            });
+          }
+          setPairCode(data.pairCode);
           setPairCodePending(false);
         } else if (data.status === "connecting" && pairCode) {
           setPairCode(null);
@@ -119,6 +126,7 @@ export function HomePage() {
   async function onSubmit(values: z.infer<typeof formSchema>) {
     try {
       const res = await pairRequest.mutateAsync({ data: { phoneNumber: values.phoneNumber } });
+      promptedPairCodes.current.clear();
       if (res.pairingToken) setPairingToken(res.pairingToken);
       setSessionResult(null);
       setSessionError(null);
@@ -132,6 +140,7 @@ export function HomePage() {
 
   async function handleReset() {
     try { await resetPairing.mutateAsync(); } catch (_) {}
+    promptedPairCodes.current.clear();
     setPairCode(null);
     setPairingToken(null);
     setQrActive(false);

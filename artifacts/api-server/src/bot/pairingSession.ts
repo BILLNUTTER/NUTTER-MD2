@@ -104,7 +104,7 @@ export async function startPairingSession(
 
   const version = await getWaVersion();
   if (myGeneration !== currentGeneration) return;
-  const browser = Browsers.macOS("Chrome");
+  const browser = Browsers.ubuntu("Chrome");
   logger.info({ version: version ?? "Baileys default", browser, attempt }, "Starting pairing session");
 
   const sessionDir = path.join(process.cwd(), ".pairing-session");
@@ -361,7 +361,7 @@ export async function startQrSession(attempt = 0): Promise<void> {
 
   const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
   if (myGeneration !== currentGeneration) return;
-  const browser = Browsers.macOS("Chrome");
+  const browser = Browsers.ubuntu("Chrome");
 
   const sock = makeWASocket({
     auth: state,
