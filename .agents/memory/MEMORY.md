@@ -1,0 +1,1 @@
+- [NUTTER-XMD dependency compatibility](nutter-md-dependency-compatibility.md) — keep Baileys, generated API types, Zod, and React Query versions aligned.

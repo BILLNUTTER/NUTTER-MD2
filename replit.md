@@ -1,45 +1,69 @@
-# [Project name]
+# NUTTER-XMD Workspace
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+## Project Overview
 
-## Run & Operate
+NUTTER-XMD is a WhatsApp multi-device bot platform. It has two deployment targets:
+- **Deployment A** (admin's Heroku web service): Pairing page, deploy page (fork verification), admin dashboard — Express serves both API and built React frontend
+- **Deployment B** (each deployer's Heroku): Baileys-based bot engine using SESSION_ID from Heroku config vars
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+## Architecture
+
+- **Frontend** (`artifacts/nutter-xmd/`): React + Vite, dark theme with WhatsApp green, 3 pages: Pairing (`/`), Deploy (`/deploy`), Admin (`/admin`)
+- **API Server** (`artifacts/api-server/`): Express 5, Baileys bot engine, pair/admin routes, DB-backed group & user settings
+- **Database** (`lib/db/`): PostgreSQL + Drizzle ORM — stores only `group_settings` and `user_settings` (never WhatsApp credentials)
+- **Bot** (`artifacts/api-server/src/bot/`): `botEngine.ts`, `pairingSession.ts`, `session.ts`, `handler.ts`, `commands/`
+
+## Key Design Decisions
+
+- SESSION_ID = base64-encoded Baileys creds JSON — stored as Heroku config var ONLY, never in DB
+- Bot starts automatically on server startup if `SESSION_ID` env var is present
+- `@whiskeysockets/baileys` and `protobufjs` are externalized in esbuild (not bundled) due to dynamic imports
+- `lib/api-zod/src/index.ts` must only export `./generated/api` (not `./generated/types`) — fixed after each codegen run
 
 ## Stack
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- **Monorepo tool**: pnpm workspaces
+- **Node.js version**: 24
+- **Package manager**: pnpm
+- **TypeScript version**: 5.9
+- **API framework**: Express 5
+- **Database**: PostgreSQL + Drizzle ORM
+- **WhatsApp**: @whiskeysockets/baileys (multi-device)
+- **Validation**: Zod, drizzle-zod
+- **API codegen**: Orval (from OpenAPI spec at `lib/api-spec/openapi.yaml`)
+- **Build**: esbuild (ESM bundle, Baileys externalized)
 
-## Where things live
+## Key Commands
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `pnpm run typecheck` — full typecheck across all packages
+- `pnpm run build` — typecheck + build all packages
+- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from OpenAPI spec
+- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
+- `pnpm --filter @workspace/api-server run dev` — run API server locally
 
-## Architecture decisions
+## Environment Variables
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- `SESSION_ID` — base64-encoded Baileys credentials (set on Heroku for each deployer's bot instance)
+- `ADMIN_PASSWORD` — password for the admin dashboard
+- `DATABASE_URL` — PostgreSQL connection string
+- `PORT` — server port (auto-assigned by Replit)
 
-## Product
+## Deployment
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+### Deployment A — Admin's Heroku web service
+The `Procfile` `web` dyno runs `node artifacts/api-server/dist/index.mjs`.
+Express serves `/api/*` routes and the built React frontend at `/*` in production.
 
-## User preferences
+Deploy steps:
+1. Create a new Heroku app (manual, not the "Deploy to Heroku" button — that is for deployers)
+2. Connect the GitHub repo — Heroku detects pnpm, runs `heroku-postbuild` to build frontend + API
+3. In Resources tab: scale `web` dyno to 1, `worker` dyno to 0
+4. Set config vars: `NODE_ENV=production`, `ADMIN_PASSWORD=<yourpassword>`
+5. Do NOT set `SESSION_ID` — bot engine must not start on the admin server
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+### Deployment B — Deployer's Heroku dyno
+Procfile `worker` dyno runs `node artifacts/api-server/dist/bot-standalone.mjs`.
+Required Heroku config vars: `SESSION_ID`, `OWNER_NUMBER`, `DATABASE_URL`, `BOT_NAME`, `PREFIX`.
+The "Deploy to Heroku" button in the README uses `app.json` which auto-configures the worker formation.
 
-## Gotchas
-
-_Populate as you build — sharp edges, "always run X before Y" rules._
-
-## Pointers
-
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.

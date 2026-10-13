@@ -61,6 +61,7 @@ export default defineConfig({
     allowedHosts: true,
     fs: {
       strict: true,
+      deny: ["**/.*"],
     },
   },
   preview: {
