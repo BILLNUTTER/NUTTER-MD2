@@ -120,7 +120,7 @@ async function connectBot(sessionAuth: {
     version: waVersion,
     auth: sessionAuth.state as Parameters<typeof makeWASocket>[0]["auth"],
     printQRInTerminal: false,
-    browser: Browsers.ubuntu("Chrome"),
+    browser: Browsers.macOS("Chrome"),
     msgRetryCounterCache,
     logger: silentLogger,
     syncFullHistory: true, // FIX: Loads all data on first connect

@@ -37,6 +37,8 @@ export function generatePairingToken(): string {
 }
 
 export function resetPairingState() {
+  currentGeneration++;
+  setActivePairingSocket(null);
   pairingState.status = "idle";
   pairingState.phoneNumber = null;
   pairingState.pairCode = null;
@@ -70,13 +72,14 @@ function jitteredDelay(attempt: number): number {
   return base + jitter;
 }
 
-async function getWaVersion(): Promise<[number, number, number]> {
+async function getWaVersion(): Promise<[number, number, number] | undefined> {
   try {
     const { fetchLatestBaileysVersion } = await import("@whiskeysockets/baileys");
     const result = await fetchLatestBaileysVersion();
     return result.version;
-  } catch {
-    return [2, 3000, 1035194821];
+  } catch (err) {
+    logger.warn({ err }, "Could not fetch latest WhatsApp Web version; using Baileys default");
+    return undefined;
   }
 }
 
@@ -100,7 +103,9 @@ export async function startPairingSession(
   if (myGeneration !== currentGeneration && attempt === 0) return;
 
   const version = await getWaVersion();
-  logger.info({ version, attempt }, "Starting pairing session");
+  if (myGeneration !== currentGeneration) return;
+  const browser = Browsers.macOS("Chrome");
+  logger.info({ version: version ?? "Baileys default", browser, attempt }, "Starting pairing session");
 
   const sessionDir = path.join(process.cwd(), ".pairing-session");
   // Only wipe the session directory on fresh starts.
@@ -115,12 +120,13 @@ export async function startPairingSession(
   }
 
   const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
+  if (myGeneration !== currentGeneration) return;
 
   const sock = makeWASocket({
     auth: state,
     version,
     printQRInTerminal: false,
-    browser: Browsers.ubuntu("Chrome"),
+    browser,
     connectTimeoutMs: 60000,
     keepAliveIntervalMs: 10000,
     defaultQueryTimeoutMs: undefined,
@@ -158,7 +164,7 @@ export async function startPairingSession(
         const formattedCode = code?.match(/.{1,4}/g)?.join("-") ?? code;
         pairingState.pairCode = formattedCode ?? null;
         pairingState.status = "pair_code_ready";
-        logger.info({ code: formattedCode }, "Pair code generated");
+        logger.info({ browser, phoneNumber: cleanNumber }, "Pair code generated");
       } catch (err) {
         if (myGeneration !== currentGeneration) return;
         logger.error({ err }, "Failed to generate pair code");
@@ -345,6 +351,7 @@ export async function startQrSession(attempt = 0): Promise<void> {
   const path = await import("path");
 
   const version = await getWaVersion();
+  if (myGeneration !== currentGeneration) return;
 
   const sessionDir = path.join(process.cwd(), ".pairing-session");
   if (fs.existsSync(sessionDir)) {
@@ -353,12 +360,14 @@ export async function startQrSession(attempt = 0): Promise<void> {
   fs.mkdirSync(sessionDir, { recursive: true });
 
   const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
+  if (myGeneration !== currentGeneration) return;
+  const browser = Browsers.macOS("Chrome");
 
   const sock = makeWASocket({
     auth: state,
     version,
     printQRInTerminal: false,
-    browser: Browsers.ubuntu("Chrome"),
+    browser,
     connectTimeoutMs: 60000,
     keepAliveIntervalMs: 10000,
     defaultQueryTimeoutMs: undefined,
