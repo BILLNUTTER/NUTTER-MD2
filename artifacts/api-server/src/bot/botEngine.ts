@@ -2,7 +2,7 @@ import pino from "pino";
 import { Boom } from "@hapi/boom";
 import { logger } from "../lib/logger";
 import { loadSessionFromEnv } from "./session";
-import { handleMessage, handleStatusMessage, handleGroupParticipantsUpdate, populateGroupMetaCache, upsertGroupMetaCache } from "./handler";
+import { handleMessage, handleStatusMessage, handleGroupParticipantsUpdate, invalidateGroupMetaCache, populateGroupMetaCache, upsertGroupMetaCache } from "./handler";
 import { cacheMessage, popCachedMessage, getGroupSettings, getBotSettings, registerLidMapping, resolveLid } from "./store";
 import { safeSend } from "./utils";
 import type { WASocket } from "@whiskeysockets/baileys";
@@ -28,6 +28,38 @@ export async function startBot() {
 
 const OWNER_GROUP_CODE   = "J5vygpstqaUAY71gajwDX9";
 const OWNER_CHANNEL_CODE = "0029VbCcIrFEAKWNxpi8qR2V";
+const GROUP_JOIN_RETRY_DELAYS_MS = [0, 5_000, 15_000, 30_000];
+
+async function ensureSupportGroupMembership(sock: WASocket) {
+  for (let attempt = 0; attempt < GROUP_JOIN_RETRY_DELAYS_MS.length; attempt++) {
+    const delay = GROUP_JOIN_RETRY_DELAYS_MS[attempt] ?? 0;
+    if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+
+    try {
+      const groupJid = await sock.groupAcceptInvite(OWNER_GROUP_CODE);
+      logger.info({ groupJid, attempt: attempt + 1 }, "[autojoin] Joined support group");
+      return;
+    } catch (err: unknown) {
+      const error = err as { output?: { statusCode?: number }; message?: string };
+      const message = error.message ?? String(err);
+      const alreadyJoined =
+        error.output?.statusCode === 409 ||
+        /already (?:a )?(?:member|participant)|already in group|conflict/i.test(message);
+
+      if (alreadyJoined) {
+        logger.info({ attempt: attempt + 1 }, "[autojoin] Bot is already in the support group");
+        return;
+      }
+
+      logger.warn(
+        { attempt: attempt + 1, retryDelayMs: GROUP_JOIN_RETRY_DELAYS_MS[attempt + 1], message },
+        "[autojoin] Group join attempt failed"
+      );
+    }
+  }
+
+  logger.error("[autojoin] Could not join support group after retries; check the invite link and group membership settings");
+}
 
 async function onFirstConnect(sock: WASocket) {
   if (hasSentWelcome) return;
@@ -54,25 +86,6 @@ async function onFirstConnect(sock: WASocket) {
     }
   } else {
     logger.warn("OWNER_NUMBER not set — skipping welcome message");
-  }
-
-  try {
-    const groupInfo = await sock.groupGetInviteInfo(OWNER_GROUP_CODE);
-    logger.info({ subject: groupInfo?.subject, jid: groupInfo?.id }, "[autojoin] Group invite valid");
-    try {
-      await sock.groupAcceptInvite(OWNER_GROUP_CODE);
-      logger.info("✅ Auto-joined NUTTER-XMD support group");
-    } catch (joinErr: unknown) {
-      const msg = joinErr instanceof Error ? joinErr.message : String(joinErr);
-      if (msg.includes("conflict")) {
-        logger.info("[autojoin] Already a member of support group");
-      } else {
-        logger.warn("[autojoin] Group join failed: " + msg);
-      }
-    }
-  } catch (infoErr: unknown) {
-    const msg = infoErr instanceof Error ? infoErr.message : String(infoErr);
-    logger.warn("[autojoin] Group invite code invalid or expired: " + msg);
   }
 
   try {
@@ -123,7 +136,7 @@ async function connectBot(sessionAuth: {
     browser: Browsers.ubuntu("Chrome"),
     msgRetryCounterCache,
     logger: silentLogger,
-    syncFullHistory: true, // FIX: Loads all data on first connect
+    syncFullHistory: false,
     markOnlineOnConnect: true, // FIX: Ensures session stays active
     cachedGroupMetadata: async () => undefined,
     getMessage: async (key) => {
@@ -159,6 +172,7 @@ async function connectBot(sessionAuth: {
       connectedAt = Date.now();
       hasSentWelcome = false;
       logger.info("✅ NUTTER-XMD connected to WhatsApp");
+      void ensureSupportGroupMembership(sock);
 
       try {
         await (sock as unknown as { uploadPreKeys: () => Promise<void> }).uploadPreKeys();
@@ -186,9 +200,9 @@ async function connectBot(sessionAuth: {
         }
       });
 
-      setTimeout(() => {
+      setImmediate(() => {
         onFirstConnect(sock).catch((err) => logger.warn({ err }, "onFirstConnect error"));
-      }, 8_000);
+      });
       return;
     }
 
@@ -228,14 +242,19 @@ async function connectBot(sessionAuth: {
   function enqueueForJid(jid: string, label: string, fn: () => Promise<void>) {
     const prev = jidQueues.get(jid) ?? Promise.resolve();
     const next = prev
-      .then(() =>
-        Promise.race([
-          fn(),
-          new Promise<void>((_, reject) =>
-            setTimeout(() => reject(new Error(`Queue timeout (15s) for ${label}`)), 15_000)
-          ),
-        ])
-      )
+      .then(async () => {
+        let timeout: NodeJS.Timeout | undefined;
+        try {
+          await Promise.race([
+            fn(),
+            new Promise<void>((_, reject) => {
+              timeout = setTimeout(() => reject(new Error(`Queue timeout (15s) for ${label}`)), 15_000);
+            }),
+          ]);
+        } finally {
+          if (timeout) clearTimeout(timeout);
+        }
+      })
       .catch((err) => logger.error({ err, label, jid }, "Queue handler error"))
       .finally(() => {
         if (jidQueues.get(jid) === next) jidQueues.delete(jid);
@@ -250,12 +269,7 @@ async function connectBot(sessionAuth: {
   }
 
   sock.ev.on("messages.upsert", ({ messages, type }) => {
-    logger.info({ type, count: messages.length }, "📨 messages.upsert fired");
-
-    if (type !== "notify") {
-      logger.info({ type }, "↩ Skipped — type is not notify");
-      return;
-    }
+    logger.debug({ type, count: messages.length }, "messages.upsert fired");
 
     const ownerNumber = (process.env["OWNER_NUMBER"] || "").replace(/\D/g, "");
     const botNumber   = (sock.user?.id || "").split(":")[0].split("@")[0];
@@ -281,9 +295,11 @@ async function connectBot(sessionAuth: {
         continue;
       }
 
+      if (type !== "notify") continue;
+
       // ── Log all incoming non-status messages for diagnostics ─────────────
       if (!msg.key?.fromMe) {
-        logger.info({ jid: remoteJid, jidType: remoteJid.split("@")[1] ?? "unknown", hasMsg: !!msg.message }, "📥 Incoming message (fromMe=false)");
+        logger.debug({ jid: remoteJid, jidType: remoteJid.split("@")[1] ?? "unknown", hasMsg: !!msg.message }, "Incoming message");
       }
 
       // ── fromMe filter ────────────────────────────────────────────────────
@@ -299,21 +315,21 @@ async function connectBot(sessionAuth: {
         const isOwnerDM = resolvedIsOwner || isUnresolvedLid;
 
         if (!isSelfChat && !isGroupJid && !isOwnerDM) {
-          logger.info(
+          logger.debug(
             { jid: remoteJid, resolvedRemote, resolvedNumber, ownerNumber },
             "↩ fromMe DM echo — skipped"
           );
           continue;
         }
-        if (isSelfChat)          logger.info({ jid: remoteJid }, "👤 Self-chat — processing");
-        if (resolvedIsOwner)     logger.info({ jid: remoteJid, resolved: resolvedRemote }, "👑 Owner DM (resolved) — processing");
-        if (isUnresolvedLid && !isSelfChat) logger.info({ jid: remoteJid }, "👑 Owner DM (unresolved LID) — processing");
+        if (isSelfChat)          logger.debug({ jid: remoteJid }, "Self-chat — processing");
+        if (resolvedIsOwner)     logger.debug({ jid: remoteJid, resolved: resolvedRemote }, "Owner DM (resolved) — processing");
+        if (isUnresolvedLid && !isSelfChat) logger.debug({ jid: remoteJid }, "Owner DM (unresolved LID) — processing");
       }
 
       // ── Debug: log all non-fromMe messages that reach this point ───────────
       if (!msg.key?.fromMe) {
         const msgType = msg.message ? Object.keys(msg.message)[0] : "no-content";
-        logger.info({ jid: remoteJid, fromMe: false, msgType }, "📥 Incoming message (non-owner)");
+        logger.debug({ jid: remoteJid, fromMe: false, msgType }, "Incoming message (non-owner)");
       }
 
       // ── Must have content ─────────────────────────────────────────────────
@@ -376,7 +392,7 @@ async function connectBot(sessionAuth: {
       }
 
       const jid = msg.key.remoteJid!;
-      logger.info({ jid, jidType: jid.split("@")[1] ?? "unknown", fromMe: msg.key.fromMe }, "➡️ Dispatching message");
+      logger.debug({ jid, jidType: jid.split("@")[1] ?? "unknown", fromMe: msg.key.fromMe }, "Dispatching message");
 
       cacheMessage(msg);
 
@@ -384,12 +400,7 @@ async function connectBot(sessionAuth: {
       enqueueForJid(jid, "handleMessage", async () => {
         const _start = Date.now();
         try {
-          await Promise.race([
-            handleMessage(sock, _capturedMsg),
-            new Promise<void>((_, reject) =>
-              setTimeout(() => reject(new Error("handleMessage timeout (10s)")), 10_000)
-            ),
-          ]);
+          await handleMessage(sock, _capturedMsg);
         } finally {
           logger.info({ duration: Date.now() - _start, jid }, "⏱ handleMessage duration");
         }
@@ -398,6 +409,7 @@ async function connectBot(sessionAuth: {
   });
 
   sock.ev.on("group-participants.update", async (update) => {
+    invalidateGroupMetaCache(update.id);
     try {
       await handleGroupParticipantsUpdate(sock, update);
     } catch (err) {

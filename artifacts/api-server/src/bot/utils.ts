@@ -10,10 +10,15 @@ export async function safeSend(
   content: Parameters<WASocket["sendMessage"]>[1],
   options?: Parameters<WASocket["sendMessage"]>[2]
 ): Promise<ReturnType<WASocket["sendMessage"]>> {
-  return Promise.race([
-    sock.sendMessage(jid, content, options),
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`safeSend timeout → ${jid}`)), 8_000)
-    ),
-  ]);
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      sock.sendMessage(jid, content, options),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(`safeSend timeout → ${jid}`)), 8_000);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }

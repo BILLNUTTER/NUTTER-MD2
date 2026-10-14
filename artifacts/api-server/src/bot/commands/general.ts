@@ -4,6 +4,7 @@ import { getBotSettings } from "../store";
 import { getActiveBotSessionDir, encodeSessionToBase64 } from "../session";
 import { logger } from "../../lib/logger";
 import { safeSend } from "../utils";
+import { handleFunCommand } from "./fun";
 import fs from "fs";
 import path from "path";
 
@@ -19,21 +20,6 @@ function getMenuImageBuffer(): Buffer | null {
 
 // ── Menu category definitions ─────────────────────────────────────────────────
 const MENU_CATEGORIES = [
-  {
-    icon: "🤖",
-    name: "AI",
-    commands: ["gpt", "gemini", "deepseek", "blackbox", "code", "analyze", "summarize", "translate", "recipe", "story", "teach", "generate"],
-  },
-  {
-    icon: "💾",
-    name: "DOWNLOADS",
-    commands: ["youtube", "song", "tiktok", "instagram", "twitter", "facebook", "gdrive", "mediafire", "image"],
-  },
-  {
-    icon: "🎵",
-    name: "AUDIO",
-    commands: ["tomp3", "toptt", "bass", "earrape", "reverse", "robot", "deep"],
-  },
   {
     icon: "😊",
     name: "FUN",
@@ -52,7 +38,7 @@ const MENU_CATEGORIES = [
   {
     icon: "🔒",
     name: "SECURITY",
-    commands: ["antibadword", "antimention", "antidelete", "ban", "unban"],
+    commands: ["antibadword", "setbadwords", "antimention", "antidelete", "ban", "unban"],
   },
   {
     icon: "📊",
