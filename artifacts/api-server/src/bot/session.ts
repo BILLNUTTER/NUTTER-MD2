@@ -29,7 +29,7 @@ export async function loadSessionFromEnv(): Promise<{
     return null;
   }
 
-  logger.info({ length: sessionId.length, prefix: sessionId.slice(0, 20) }, "🔑 SESSION_ID found");
+  logger.info({ length: sessionId.length }, "🔑 SESSION_ID found");
 
   if (!sessionId.startsWith(SESSION_PREFIX)) {
     logger.error({ expected: SESSION_PREFIX, got: sessionId.slice(0, 20) }, "❌ Invalid SESSION_ID prefix — re-pair on the pairing page.");
@@ -81,37 +81,16 @@ export async function loadSessionFromEnv(): Promise<{
     logger.info({ sessionDir, existingFiles: fs.readdirSync(sessionDir).length }, "📁 Reusing existing session directory");
   }
 
-  // ── Write session files, skipping session-*.json ────────────────────────
-  // session-*.json files contain per-contact Signal ratchet state tied to a
-  // specific pairing. After any restart on Heroku (ephemeral /tmp), these
-  // files are gone anyway. Writing them from SESSION_ID causes "Decrypted
-  // message with closed session" errors when the saved ratchet state no longer
-  // matches what WhatsApp expects.
-  //
-  // Strategy: NEVER write session-*.json from SESSION_ID. Always let Baileys
-  // negotiate a fresh Signal session on first contact (takes 1-2 seconds per
-  // contact, then cached in memory for the lifetime of the dyno). Only creds,
-  // pre-keys, and sender-keys are written — those survive restarts fine.
-  //
-  // Purge any stale session files on disk in case they were left by a
-  // previous run on the same dyno.
-  let purged = 0;
-  if (fs.existsSync(sessionDir)) {
-    for (const f of fs.readdirSync(sessionDir)) {
-      if (f.startsWith("session-") && f.endsWith(".json")) {
-        try { fs.rmSync(path.join(sessionDir, f)); purged++; } catch { /* ignore */ }
-      }
-    }
-    if (purged > 0) {
-      logger.info({ purged }, "🧹 Purged stale on-disk session files");
-    }
-  }
-
+  // SESSION_ID is a snapshot of Baileys' full auth state. Restore Signal
+  // session ratchets as well as credentials and pre-keys; without them, a
+  // fresh Heroku dyno cannot decrypt messages from existing chats.
+  // Keep any files already present so reconnects do not overwrite newer
+  // in-memory/dyno state with an older snapshot.
   let written = 0, skipped = 0;
   for (const [filename, fileContent] of Object.entries(fileMap)) {
-    // NEVER restore session-*.json from SESSION_ID — always negotiate fresh
-    if (filename.startsWith("session-") && filename.endsWith(".json")) {
+    if (filename === "." || filename === ".." || path.basename(filename) !== filename) {
       skipped++;
+      logger.warn({ filename }, "Skipping unsafe SESSION_ID filename");
       continue;
     }
     const filePath = path.join(sessionDir, filename);
@@ -122,7 +101,14 @@ export async function loadSessionFromEnv(): Promise<{
       skipped++;
     }
   }
-  logger.info({ written, skipped, purged, note: "session-*.json intentionally skipped — fresh Signal sessions negotiated on first contact" }, "📝 Session files written");
+  logger.info(
+    {
+      written,
+      skipped,
+      sessionFilesInSnapshot: fileKeys.filter((f) => f.startsWith("session-") && f.endsWith(".json")).length,
+    },
+    "📝 Baileys auth files restored from SESSION_ID"
+  );
 
   let authState: Awaited<ReturnType<typeof import("@whiskeysockets/baileys")["useMultiFileAuthState"]>>;
   try {
@@ -192,9 +178,8 @@ export async function loadSessionFromEnv(): Promise<{
       const newSessionId = await encodeSessionToBase64(updatedFileMap);
       logger.info(
         { sessionCount, senderKeyCount, sessionIdLength: newSessionId.length },
-        "✅ SESSION_ID fully enriched — Baileys sync complete. Copy the value below to Heroku SESSION_ID config var:"
+        "✅ SESSION_ID refreshed; use .refreshsession in WhatsApp to retrieve it securely (value omitted from logs)"
       );
-      logger.info({ SESSION_ID: newSessionId }, "📋 ENRICHED SESSION_ID");
     } catch (err) {
       logger.warn({ err }, "Session export failed — use .refreshsession instead");
     }
