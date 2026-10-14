@@ -269,7 +269,7 @@ async function connectBot(sessionAuth: {
   }
 
   sock.ev.on("messages.upsert", ({ messages, type }) => {
-    logger.debug({ type, count: messages.length }, "messages.upsert fired");
+    logger.info({ type, count: messages.length }, "messages.upsert received");
 
     const ownerNumber = (process.env["OWNER_NUMBER"] || "").replace(/\D/g, "");
     const botNumber   = (sock.user?.id || "").split(":")[0].split("@")[0];
@@ -295,7 +295,11 @@ async function connectBot(sessionAuth: {
         continue;
       }
 
-      if (type !== "notify") continue;
+      // Baileys reports newly received messages as "notify", but messages
+      // sent by the linked account can arrive as "append". Allow only those
+      // owner-sent append messages through; the stale-message guard below
+      // prevents replayed history from executing old commands.
+      if (type !== "notify" && !(type === "append" && msg.key?.fromMe)) continue;
 
       // ── Log all incoming non-status messages for diagnostics ─────────────
       if (!msg.key?.fromMe) {
