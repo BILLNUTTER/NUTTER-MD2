@@ -40,6 +40,11 @@ import {
 
 const DEFAULT_BAD_WORDS = ["fuck", "shit", "bitch", "asshole", "nigga", "faggot", "cunt"];
 const URL_REGEX = /https?:\/\/[^\s]+|wa\.me\/[^\s]+|t\.me\/[^\s]+/i;
+const GROUP_ADMIN_CONTEXT_COMMANDS = new Set([
+  "kick", "add", "promote", "demote", "mute", "unmute",
+  "antilink", "antibadword", "setbadwords", "antimention", "antidelete",
+  "ban", "unban", "setprefix", "tagall", "welcome", "setwelcome", "autoreply",
+]);
 
 // ── Group metadata cache ───────────────────────────────────────────────────────
 interface GroupMetaEntry {
@@ -132,11 +137,14 @@ export interface CommandContext {
 // handles statuses that arrive as live notify events, never replayed history.
 export async function handleStatusMessage(sock: WASocket, msg: WAMessage) {
   const settings   = getBotSettings();
-  const senderJid  = msg.key.participant || "";
+  const senderJid  = msg.key.participant || msg.key.participantAlt || "";
 
   // Skip if no sender, or if sender IS status@broadcast (reaction notifications,
   // senderKeyDistribution etc — not actual status posts we should react to)
-  if (!senderJid || senderJid === "status@broadcast") return;
+  if (!senderJid || senderJid === "status@broadcast") {
+    logger.debug({ messageId: msg.key.id }, "Status event has no resolvable poster JID");
+    return;
+  }
 
   // WhatsApp may reject a status reaction until it has been marked viewed.
   // Read once for either feature so auto-like-only mode also works.
@@ -246,7 +254,7 @@ export async function handleMessage(sock: WASocket, msg: WAMessage) {
   }
 
   const msgType = Object.keys(msg.message || {})[0] || "unknown";
-  const botMode = (process.env["BOT_MODE"] || "public").toLowerCase();
+  const botMode = (process.env["BOT_MODE"] || "public").trim().toLowerCase();
   if (botMode === "private" && !isOwner) {
     logger.debug({ jid, msgType }, "Skipped — private mode");
     return;
@@ -287,7 +295,11 @@ export async function handleMessage(sock: WASocket, msg: WAMessage) {
     );
     // Ordinary group chat and auto-replies do not need a network metadata
     // lookup. Fetch it only for commands or enabled moderation checks.
-    if (body.startsWith(prefix) || hasGroupProtection) {
+    const commandName = body.startsWith(prefix)
+      ? body.slice(prefix.length).trim().split(/\s+/, 1)[0]?.toLowerCase() ?? ""
+      : "";
+    const needsGroupAdminContext = GROUP_ADMIN_CONTEXT_COMMANDS.has(commandName);
+    if (needsGroupAdminContext || hasGroupProtection) {
       try {
         const groupMeta = await getCachedGroupMeta(sock, jid);
         groupName   = groupMeta.subject;

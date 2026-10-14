@@ -66,7 +66,7 @@ async function onFirstConnect(sock: WASocket) {
   hasSentWelcome = true;
 
   const ownerNumber = (process.env["OWNER_NUMBER"] || "").replace(/\D/g, "");
-  const mode   = (process.env["BOT_MODE"] || "public").toLowerCase();
+  const mode   = (process.env["BOT_MODE"] || "public").trim().toLowerCase();
   const prefix = process.env["PREFIX"] || ".";
   const botNumber = (sock.user?.id || "").split(":")[0].split("@")[0];
 
