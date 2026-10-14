@@ -22,7 +22,7 @@ const REQUIREMENTS = [
 ];
 
 const STEPS = [
-  { n: "01", title: "Fork the repo", body: "Go to the Nutter-MD GitHub repository and click Fork. This gives you your own copy to deploy." },
+  { n: "01", title: "Fork the repo", body: "Go to the BILLNUTTER/NUTTER-MD2 GitHub repository and click Fork. This gives you your own copy to deploy." },
   { n: "02", title: "Get your Session ID", body: "Head to the Pairing page, enter your WhatsApp number and get your pair code. Copy the SESSION_ID." },
   { n: "03", title: "Verify & deploy", body: "Enter your GitHub username below to verify your fork, then click Deploy to Heroku. Fill in SESSION_ID and OWNER_NUMBER when prompted." },
 ];
@@ -102,7 +102,7 @@ export function DeployPage() {
               <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/20 text-primary font-bold text-sm shrink-0">1</div>
               <div>
                 <CardTitle className="text-lg">Verify Your Fork</CardTitle>
-        <CardDescription className="mt-0.5">Fork Nutter-MD or enter BILL NUTTER / nutterxtech</CardDescription>
+        <CardDescription className="mt-0.5">Fork NUTTER-MD2 or enter BILL NUTTER / nutterxtech</CardDescription>
               </div>
             </div>
           </CardHeader>
@@ -147,9 +147,9 @@ export function DeployPage() {
                 <AlertCircle className="h-4 w-4" />
                 <AlertTitle>Fork Not Found</AlertTitle>
                 <AlertDescription className="space-y-3 mt-1">
-                  <p>User <strong>{verificationData.username}</strong> has not forked Nutter-MD yet.</p>
+                  <p>User <strong>{verificationData.username}</strong> has not forked NUTTER-MD2 yet.</p>
                   <Button variant="outline" size="sm" asChild className="border-destructive/30 hover:bg-destructive/20">
-                    <a href="https://github.com/nutterxtech/Nutter-MD" target="_blank" rel="noreferrer">
+                    <a href="https://github.com/BILLNUTTER/NUTTER-MD2" target="_blank" rel="noreferrer">
                       <Github className="mr-2 h-4 w-4" /> Fork on GitHub
                     </a>
                   </Button>
@@ -198,7 +198,7 @@ export function DeployPage() {
 
             <Button size="lg" className="w-full font-bold h-14 text-base bg-[#430098] hover:bg-[#430098]/90 text-white border-0" asChild>
               <a
-                href={verificationData?.deployUrl || `https://heroku.com/deploy?template=https://github.com/${username}/Nutter-MD`}
+                href={verificationData?.deployUrl || `https://heroku.com/deploy?template=https://github.com/${username}/NUTTER-MD2`}
                 target="_blank"
                 rel="noreferrer"
               >
