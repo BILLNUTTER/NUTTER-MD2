@@ -9,7 +9,7 @@ const GITHUB_API_BASE = "https://api.github.com";
 // Override with GITHUB_REPO_OWNER / GITHUB_REPO_NAME config vars on Heroku
 const REPO_OWNER = process.env["GITHUB_REPO_OWNER"] ?? "BILLNUTTER";
 const REPO_NAME = process.env["GITHUB_REPO_NAME"] ?? "NUTTER-MD2";
-const PREAPPROVED_DEPLOY_NAMES = new Set(["bill nutter", "nutterxtech"]);
+const PREAPPROVED_DEPLOY_NAMES = new Set(["billnutter", "bill nutter", "nutterxtech"]);
 
 function requireAdminPassword(req: Request, res: Response, next: NextFunction) {
   const adminPassword = process.env["ADMIN_PASSWORD"];

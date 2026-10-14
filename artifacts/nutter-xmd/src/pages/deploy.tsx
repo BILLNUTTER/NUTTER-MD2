@@ -18,7 +18,7 @@ const REQUIREMENTS = [
   { icon: "🔑", label: "SESSION_ID from the Pairing page" },
   { icon: "📱", label: "Owner WhatsApp number (international format)" },
   { icon: "☁️", label: "A free or hobby Heroku account" },
-  { icon: "🍴", label: "A fork, or the approved names BILL NUTTER / nutterxtech" },
+  { icon: "🍴", label: "A fork, or the owner usernames BILLNUTTER / nutterxtech" },
 ];
 
 const STEPS = [
@@ -102,7 +102,7 @@ export function DeployPage() {
               <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/20 text-primary font-bold text-sm shrink-0">1</div>
               <div>
                 <CardTitle className="text-lg">Verify Your Fork</CardTitle>
-        <CardDescription className="mt-0.5">Fork NUTTER-MD2 or enter BILL NUTTER / nutterxtech</CardDescription>
+        <CardDescription className="mt-0.5">Fork NUTTER-MD2 or enter BILLNUTTER / nutterxtech</CardDescription>
               </div>
             </div>
           </CardHeader>
@@ -162,7 +162,7 @@ export function DeployPage() {
                 <CheckCircle2 className="h-5 w-5 text-green-500 shrink-0 mt-0.5" />
                 <div>
                   <p className="font-medium text-green-500 text-sm">
-                    {["bill nutter", "nutterxtech"].includes((verificationData?.username ?? "").trim().toLowerCase())
+                    {["billnutter", "bill nutter", "nutterxtech"].includes((verificationData?.username ?? "").trim().toLowerCase())
                       ? "Owner Account Accepted"
                       : "Fork Verified"}
                   </p>
