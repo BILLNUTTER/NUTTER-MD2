@@ -162,7 +162,7 @@ export function DeployPage() {
                 <CheckCircle2 className="h-5 w-5 text-green-500 shrink-0 mt-0.5" />
                 <div>
                   <p className="font-medium text-green-500 text-sm">
-                    {["billnutter", "bill nutter", "nutterxtech"].includes((verificationData?.username ?? "").trim().toLowerCase())
+                    {["billnutter", "nutterxtech"].includes((verificationData?.username ?? "").trim().toLowerCase())
                       ? "Owner Account Accepted"
                       : "Fork Verified"}
                   </p>

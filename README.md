@@ -20,13 +20,13 @@ NUTTER-XMD is a WhatsApp bot that runs on your own Heroku instance. It supports 
 
 ### Step 2: Fork this Repo
 
-[Fork Nutter-MD on GitHub](https://github.com/nutterxtech/Nutter-MD/fork)
+[Fork NUTTER-MD2 on GitHub](https://github.com/BILLNUTTER/NUTTER-MD2/fork)
 
 ---
 
 ### Step 3: Deploy to Heroku
 
-[![Deploy to Heroku](https://www.herokucdn.com/deploy/button.svg)](https://nutter-md-31047d4ad9a9.herokuapp.com/deploy)
+[![Deploy to Heroku](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/BILLNUTTER/NUTTER-MD2)
 
 ---
 

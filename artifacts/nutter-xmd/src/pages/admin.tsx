@@ -193,7 +193,7 @@ export function AdminPage() {
                         className="inline-flex items-center gap-1.5 text-sm font-mono bg-muted/50 px-2 py-1 rounded hover:bg-primary/10 hover:text-primary transition-colors border border-border"
                       >
                         <GitFork className="h-3.5 w-3.5" />
-                        {fork.login}/Nutter-MD
+                        {fork.login}/NUTTER-MD2
                       </a>
                     </TableCell>
                     <TableCell className="text-right text-sm text-muted-foreground">
