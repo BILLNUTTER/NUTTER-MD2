@@ -269,11 +269,6 @@ export async function handleMessage(sock: WASocket, msg: WAMessage) {
 
   const msgType = Object.keys(msg.message || {})[0] || "unknown";
   const botMode = (process.env["BOT_MODE"] || "public").trim().toLowerCase();
-  if (botMode === "private" && !isOwner) {
-    logger.debug({ jid, msgType }, "Skipped — private mode");
-    return;
-  }
-
   const body =
     msg.message?.conversation ||
     msg.message?.extendedTextMessage?.text ||
@@ -285,9 +280,25 @@ export async function handleMessage(sock: WASocket, msg: WAMessage) {
     msg.message?.templateButtonReplyMessage?.selectedId ||
     "";
 
+  logger.info(
+    {
+      fromMe: !!msg.key.fromMe,
+      isGroup,
+      msgType,
+      hasText: Boolean(body),
+      botMode,
+    },
+    "Incoming message reached command handler"
+  );
+
+  if (botMode === "private" && !isOwner) {
+    logger.info({ msgType, botMode }, "Message ignored by private mode");
+    return;
+  }
+
   if (!body) {
     printMessageActivity({ msgType, pushName: msg.pushName || "", senderNumber, isGroup });
-    logger.debug({ jid, msgType }, "No text body — skipped");
+    logger.info({ msgType }, "Message ignored because it has no text body");
     return;
   }
 
@@ -363,9 +374,9 @@ export async function handleMessage(sock: WASocket, msg: WAMessage) {
   }
 
   printMessageActivity({ msgType, pushName: msg.pushName || "", senderNumber, isGroup, groupName, groupNumber });
-  logger.debug({ jid, prefix, hasPrefix: body.startsWith(prefix) }, "Message body extracted");
 
   if (!body.startsWith(prefix)) {
+    logger.info({ prefix, msgType }, "Message ignored because it does not start with the configured prefix");
     if (isGroup && groupSettings?.autoReply) {
       try {
         const autoReplyMap: Record<string, string> = JSON.parse(groupSettings.autoReply);
