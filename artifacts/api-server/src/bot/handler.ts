@@ -1,6 +1,6 @@
 import type { WASocket, WAMessage, WAMessageKey, proto } from "@whiskeysockets/baileys";
 import type { GroupSettings } from "./store";
-import { getGroupSettings, getUserSettings, getBotSettings, updateBotSettings, resolveLid, tryLiveResolveLid } from "./store";
+import { getGroupSettings, getUserSettings, getBotSettings, updateBotSettings, registerLidMapping, resolveLid, tryLiveResolveLid } from "./store";
 import { logger } from "../lib/logger";
 import { safeSend } from "./utils";
 
@@ -131,6 +131,19 @@ export interface CommandContext {
   prefix: string;
 }
 
+function resolveMessageJid(sock: WASocket, rawJid: string, alternateJid?: string | null): string {
+  if (!rawJid.endsWith("@lid")) return rawJid;
+
+  if (alternateJid?.endsWith("@s.whatsapp.net")) {
+    registerLidMapping(rawJid, alternateJid);
+    return alternateJid;
+  }
+
+  const cached = resolveLid(rawJid);
+  if (cached !== rawJid) return cached;
+  return tryLiveResolveLid(sock, rawJid) ?? rawJid;
+}
+
 // ── Status broadcast handler ───────────────────────────────────────────────────
 // Only processes statuses posted AFTER the bot connected (connectedAt guard is
 // applied in connection.ts via the stale-message filter). This function only
@@ -241,7 +254,8 @@ export async function handleMessage(sock: WASocket, msg: WAMessage) {
     logger.debug({ jid }, "Owner identified via fromMe=true");
   } else {
     senderJidRaw  = isGroup ? (msg.key.participant || botJidFull) : jid;
-    realSenderJid = resolveLid(senderJidRaw);
+    const alternateSenderJid = isGroup ? msg.key.participantAlt : msg.key.remoteJidAlt;
+    realSenderJid = resolveMessageJid(sock, senderJidRaw, alternateSenderJid);
     senderNumber  = realSenderJid.split(":")[0].split("@")[0];
 
     const numberMatch = ownerNumber !== "" && senderNumber === ownerNumber;
@@ -375,28 +389,18 @@ export async function handleMessage(sock: WASocket, msg: WAMessage) {
     const linkedNumber = ownerNumber || botJidFull.split(":")[0].split("@")[0];
     replyJid = `${linkedNumber}@s.whatsapp.net`;
   } else {
-    const resolved = resolveLid(jid);
+    const resolved = resolveMessageJid(sock, jid, msg.key.remoteJidAlt);
     if (resolved.endsWith("@lid")) {
       if (isOwner) {
         // Owner's LID not yet mapped — fall back to their real phone JID
         replyJid = `${ownerNumber}@s.whatsapp.net`;
         logger.info({ lid: jid, fallback: replyJid }, "🔀 Owner @lid unresolved — using owner JID as reply fallback");
       } else {
-        // Unknown user's @lid — first try a live lookup against Baileys'
-        // internal signal repository, which may already hold a LID↔PN
-        // mapping that hasn't reached us via contacts.upsert yet. This is
-        // an in-memory, synchronous check — no network round-trip.
-        const liveResolved = tryLiveResolveLid(sock, jid);
-        if (liveResolved && liveResolved !== jid) {
-          replyJid = liveResolved;
-          logger.info({ lid: jid, resolved: liveResolved }, "🔀 Unknown @lid — resolved via live signal repository");
-        } else {
-          // Last resort: reply directly to the raw @lid JID. This is not
-          // guaranteed to deliver — logged as a warning so failed DM
-          // replies are diagnosable from logs instead of silently vanishing.
-          replyJid = jid;
-          logger.warn({ lid: jid }, "⚠️ Unknown @lid — no mapping available, reply may not deliver");
-        }
+        // Last resort: reply directly to the raw @lid JID. This is not
+        // guaranteed to deliver; Baileys' alternate JID and live mapping
+        // lookup have already been tried.
+        replyJid = jid;
+        logger.warn({ lid: jid }, "⚠️ Unknown @lid — no mapping available, reply may not deliver");
       }
     } else {
       replyJid = resolved;
