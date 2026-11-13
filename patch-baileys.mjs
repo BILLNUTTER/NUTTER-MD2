@@ -76,15 +76,10 @@ function patchBaileysRetry() {
 function patchLibsignalLogRedaction() {
   const target = findPnpmFile('libsignal@', 'libsignal', 'src/session_record.js');
   if (!target) {
-    console.warn('[patch-baileys] libsignal session_record.js not found — skipping log redaction');
-    return;
+    throw new Error('[patch-baileys] libsignal session_record.js not found — refusing to build with unverified session-log redaction');
   }
 
   let src = fs.readFileSync(target, 'utf-8');
-  if (src.includes('NUTTER_SIGNAL_LOGS_REDACTED')) {
-    console.log('[patch-baileys] Signal session log redaction already applied');
-    return;
-  }
 
   const replacements = [
     [
@@ -99,19 +94,32 @@ function patchLibsignalLogRedaction() {
       /console\.info\(["']Opening session:["'],\s*session\);/,
       'console.info("Opening session (session details redacted)");',
     ],
+    [
+      /console\.info\(["']Removing old closed session:["'],\s*oldestSession\);/,
+      'console.info("Removing old closed session (session details redacted)");',
+    ],
   ];
 
-  if (!replacements.every(([pattern]) => pattern.test(src))) {
-    console.warn('[patch-baileys] Signal log patterns changed; session objects were not patched');
-    return;
+  let changed = false;
+  for (const [pattern, replacement] of replacements) {
+    if (pattern.test(src)) {
+      src = src.replace(pattern, replacement);
+      changed = true;
+    }
   }
 
-  for (const [pattern, replacement] of replacements) {
-    src = src.replace(pattern, replacement);
+  const unsafeSessionLog = /console\.(?:warn|info|log)\([^;\n]*,\s*(?:session|oldestSession)\s*\);/i;
+  if (unsafeSessionLog.test(src)) {
+    throw new Error(`[patch-baileys] Unredacted Signal session logging remains in ${target}`);
   }
-  src = `// NUTTER_SIGNAL_LOGS_REDACTED\n${src}`;
-  fs.writeFileSync(target, src, 'utf-8');
-  console.log('[patch-baileys] Sensitive Signal session objects redacted from logs');
+
+  if (changed) {
+    if (!src.includes('NUTTER_SIGNAL_LOGS_REDACTED')) {
+      src = `// NUTTER_SIGNAL_LOGS_REDACTED\n${src}`;
+    }
+    fs.writeFileSync(target, src, 'utf-8');
+  }
+  console.log(`[patch-baileys] Signal session log redaction ${changed ? 'applied' : 'verified'}`);
 }
 
 patchBaileysRetry();
