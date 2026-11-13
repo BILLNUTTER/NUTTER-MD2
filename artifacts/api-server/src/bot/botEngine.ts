@@ -6,6 +6,7 @@ import { handleMessage, handleStatusMessage, handleGroupParticipantsUpdate, inva
 import { cacheMessage, popCachedMessage, getGroupSettings, getBotSettings, registerLidMapping, resolveLid } from "./store";
 import { safeSend } from "./utils";
 import type { WASocket } from "@whiskeysockets/baileys";
+import { WAMessageStubType } from "@whiskeysockets/baileys";
 
 const MAX_RECONNECTS = 10;
 const RECONNECT_DELAY_MS = 5000;
@@ -314,8 +315,19 @@ async function connectBot(sessionAuth: {
       // ── Must have content ─────────────────────────────────────────────────
       if (!msg.message || !msg.key?.remoteJid) {
         const stubType = msg.messageStubType ?? 0;
-        if (stubType === 0) {
-          logger.warn({ jid: remoteJid, fromMe: msg.key?.fromMe }, "⚠️ Decryption failure — re-pair to fix.");
+        if (stubType === WAMessageStubType.CIPHERTEXT) {
+          const stubReason = msg.messageStubParameters?.[0] ?? "";
+          const errorCode = /bad mac/i.test(stubReason)
+            ? "BAD_MAC"
+            : /key used already|never filled/i.test(stubReason)
+              ? "MISSING_SESSION_KEY"
+              : "UNKNOWN_CIPHERTEXT";
+          logger.error(
+            { jid: remoteJid, fromMe: msg.key?.fromMe, errorCode },
+            "❌ Baileys could not decrypt this message; no command was processed"
+          );
+        } else if (stubType === 0) {
+          logger.warn({ jid: remoteJid, fromMe: msg.key?.fromMe }, "⚠️ Message arrived without content or a known stub type.");
         } else {
           logger.info({ stubType, jid: remoteJid }, "↩ Protocol notification — skipped");
         }
