@@ -237,31 +237,6 @@ async function connectBot(sessionAuth: {
     }
   });
 
-  const jidQueues = new Map<string, Promise<void>>();
-
-  function enqueueForJid(jid: string, label: string, fn: () => Promise<void>) {
-    const prev = jidQueues.get(jid) ?? Promise.resolve();
-    const next = prev
-      .then(async () => {
-        let timeout: NodeJS.Timeout | undefined;
-        try {
-          await Promise.race([
-            fn(),
-            new Promise<void>((_, reject) => {
-              timeout = setTimeout(() => reject(new Error(`Queue timeout (15s) for ${label}`)), 15_000);
-            }),
-          ]);
-        } finally {
-          if (timeout) clearTimeout(timeout);
-        }
-      })
-      .catch((err) => logger.error({ err, label, jid }, "Queue handler error"))
-      .finally(() => {
-        if (jidQueues.get(jid) === next) jidQueues.delete(jid);
-      });
-    jidQueues.set(jid, next);
-  }
-
   function fireAsync(label: string, fn: () => Promise<void>) {
     Promise.resolve()
       .then(() => fn())
@@ -401,7 +376,7 @@ async function connectBot(sessionAuth: {
       cacheMessage(msg);
 
       const _capturedMsg = msg;
-      enqueueForJid(jid, "handleMessage", async () => {
+      fireAsync("handleMessage", async () => {
         const _start = Date.now();
         try {
           await handleMessage(sock, _capturedMsg);

@@ -79,10 +79,7 @@ function buildMenuText(prefix: string, pushName: string): string {
 // ── Command handlers ──────────────────────────────────────────────────────────
 
 export async function handlePing(sock: WASocket, msg: WAMessage, ctx: CommandContext) {
-  const start = Date.now();
-  await safeSend(sock, ctx.jid, { text: "🏓 Pinging..." }, { quoted: msg });
-  const latency = Date.now() - start;
-  await safeSend(sock, ctx.jid, { text: `🏓 *Pong!*\n*Latency:* ${latency}ms` }, { quoted: msg });
+  await safeSend(sock, ctx.jid, { text: "🏓 *Pong!* Bot is alive." }, { quoted: msg });
 }
 
 export async function handleAlive(sock: WASocket, _msg: proto.IWebMessageInfo, ctx: CommandContext) {
