@@ -1,2 +1,3 @@
 - [NUTTER-XMD dependency compatibility](nutter-md-dependency-compatibility.md) — keep Baileys, generated API types, Zod, and React Query versions aligned.
 - [Baileys upsert event handling](baileys-upsert-events.md) — retain owner-sent `append` events while guarding against replayed history.
+- [Baileys session snapshot restoration](baileys-session-snapshots.md) — restore saved Signal ratchets on a fresh dyno to avoid undecryptable incoming messages.
