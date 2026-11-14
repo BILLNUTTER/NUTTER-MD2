@@ -132,7 +132,7 @@ export async function handleAntibadword(sock: WASocket, _msg: proto.IWebMessageI
       text:
         `Usage:\n` +
         `.antibadword delete — Delete bad messages\n` +
-        `.antibadword kick   — Delete + kick the sender\n` +
+        `.antibadword kick   — Delete + warn; remove after 3 violations in 24h\n` +
         `.antibadword off    — Disable\n` +
         `\nCurrent: ${ensureGroupSettings(ctx.jid).antibadword}`,
     });
@@ -202,6 +202,52 @@ export async function handleAntiDelete(sock: WASocket, _msg: proto.IWebMessageIn
   const state = raw === "on";
   updateGroupSettings(ctx.jid, { antiDelete: state });
   await safeSend(sock, ctx.jid, { text: `Antidelete is now *${state ? "ON" : "OFF"}*.${state ? "\nDeleted messages will be forwarded to owner's DM." : ""}` });
+}
+
+export async function handleAntiEdit(sock: WASocket, _msg: proto.IWebMessageInfo, ctx: CommandContext, args: string[]) {
+  if (!ctx.isGroup) {
+    await safeSend(sock, ctx.jid, { text: "This command can only be used in a group." });
+    return;
+  }
+  if (!ctx.isSenderGroupAdmin && !ctx.isOwner) {
+    await safeSend(sock, ctx.jid, { text: "🚫 Group admins only" });
+    return;
+  }
+  const raw = args[0]?.toLowerCase();
+  if (raw !== "on" && raw !== "off") {
+    await safeSend(sock, ctx.jid, {
+      text: `Usage: ${ctx.prefix}antiedit on | ${ctx.prefix}antiedit off\nCurrent: ${ensureGroupSettings(ctx.jid).antiEdit ? "ON" : "OFF"}`,
+    });
+    return;
+  }
+  const state = raw === "on";
+  updateGroupSettings(ctx.jid, { antiEdit: state });
+  await safeSend(sock, ctx.jid, {
+    text: `Anti-edit is now ${state ? "ON" : "OFF"}. Edited group messages will be reported in this group.`,
+  });
+}
+
+export async function handleAntiNudes(sock: WASocket, _msg: proto.IWebMessageInfo, ctx: CommandContext, args: string[]) {
+  if (!ctx.isGroup) {
+    await safeSend(sock, ctx.jid, { text: "This command can only be used in a group." });
+    return;
+  }
+  if (!ctx.isSenderGroupAdmin && !ctx.isOwner) {
+    await safeSend(sock, ctx.jid, { text: "🚫 Group admins only" });
+    return;
+  }
+  const raw = args[0]?.toLowerCase();
+  if (raw !== "on" && raw !== "off") {
+    await safeSend(sock, ctx.jid, {
+      text: `Usage: ${ctx.prefix}antinudes on | ${ctx.prefix}antinudes off\nCurrent: ${ensureGroupSettings(ctx.jid).antiNudes ? "ON" : "OFF"}\n\nThe first enabled sticker may take longer while the local moderation model loads.`,
+    });
+    return;
+  }
+  const state = raw === "on";
+  updateGroupSettings(ctx.jid, { antiNudes: state });
+  await safeSend(sock, ctx.jid, {
+    text: `Explicit-sticker moderation is now ${state ? "ON" : "OFF"}. The bot needs group-admin permission to delete stickers or remove repeat offenders.`,
+  });
 }
 
 export async function handleAntimention(sock: WASocket, _msg: proto.IWebMessageInfo, ctx: CommandContext, args: string[]) {

@@ -33,12 +33,12 @@ const MENU_CATEGORIES = [
   {
     icon: "⚙️",
     name: "TOOLS",
-    commands: ["sticker", "ping", "alive", "menu", "owner", "settings", "restart", "setprefix", "refreshsession"],
+    commands: ["sticker", "ping", "alive", "menu", "owner", "settings", "restart", "setprefix", "refreshsession", "autoread", "smartreply"],
   },
   {
     icon: "🔒",
     name: "SECURITY",
-    commands: ["antibadword", "setbadwords", "antimention", "antidelete", "ban", "unban"],
+    commands: ["antibadword", "setbadwords", "antimention", "antidelete", "antiedit", "antinudes", "ban", "unban"],
   },
   {
     icon: "📊",
@@ -158,6 +158,8 @@ export async function handleSettings(sock: WASocket, _msg: proto.IWebMessageInfo
     `*Status*\n` +
     `Auto-view status: ${bs.autoViewStatus ? "ON" : "OFF"}\n` +
     `Auto-like status: ${bs.autoLikeStatus ? "ON" : "OFF"}\n` +
+    `Auto-read: ${bs.autoRead ? "ON" : "OFF"}\n` +
+    `Smart reply: ${bs.smartReply ? "ON" : "OFF"}\n` +
     `Status emoji: ${bs.statusLikeEmoji}`;
 
   let groupInfo = "";
@@ -169,6 +171,8 @@ export async function handleSettings(sock: WASocket, _msg: proto.IWebMessageInfo
       `Antibadword: ${s.antibadword !== "off" ? "ON (" + s.antibadword + ")" : "OFF"}\n` +
       `Antimention: ${s.antimention ? "ON" : "OFF"}\n` +
       `Antidelete: ${s.antiDelete ? "ON" : "OFF"}\n` +
+      `Antiedit: ${s.antiEdit ? "ON" : "OFF"}\n` +
+      `Antinudes: ${s.antiNudes ? "ON" : "OFF"}\n` +
       `Mute: ${s.mute ? "ON" : "OFF"}\n` +
       `Custom Prefix: ${s.customPrefix || prefix}\n\n` +
       `*Welcome*\n` +

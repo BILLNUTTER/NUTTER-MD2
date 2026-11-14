@@ -7,6 +7,8 @@ export interface GroupSettings {
   customBadWords: string | null;
   antimention: boolean;
   antiDelete: boolean;
+  antiEdit: boolean;
+  antiNudes: boolean;
   mute: boolean;
   customPrefix: string | null;
   welcomeEnabled: boolean;
@@ -24,6 +26,8 @@ export interface BotSettings {
   autoLikeStatus: boolean;
   statusLikeEmoji: string;
   autoRejectCall: boolean;
+  autoRead: boolean;
+  smartReply: boolean;
 }
 
 // ── Group store ────────────────────────────────────────────────────────────────
@@ -46,6 +50,8 @@ export function ensureGroupSettings(groupId: string): GroupSettings {
       customBadWords: null,
       antimention: process.env["ANTI_MENTION"]   === "true",
       antiDelete:  process.env["ANTI_DELETE"]    === "true",
+      antiEdit:    process.env["ANTI_EDIT"]      === "true",
+      antiNudes:   process.env["ANTI_NUDES"]     === "true",
       mute: false,
       customPrefix: null,
       welcomeEnabled: false,
@@ -78,6 +84,8 @@ const botSettings: BotSettings = {
   autoLikeStatus: process.env["AUTO_LIKE_STATUS"] !== "false",
   statusLikeEmoji: process.env["STATUS_LIKE_EMOJI"] || "❤️",
   autoRejectCall:  process.env["AUTO_REJECT_CALL"]  !== "false",
+  autoRead:        process.env["AUTO_READ"] !== "false",
+  smartReply:      process.env["SMART_REPLY"] !== "false",
 };
 
 export function getBotSettings(): BotSettings {
@@ -89,7 +97,7 @@ export function updateBotSettings(update: Partial<BotSettings>): void {
 }
 
 // ── Volatile in-memory message cache (for antidelete) ─────────────────────────
-const MSG_TTL = 5 * 60 * 1000; // 5 minutes
+const MSG_TTL = 24 * 60 * 60 * 1000; // 24 hours for anti-delete/edit recovery
 const MSG_MAX = 2000;
 
 interface CacheEntry { msg: WAMessage; expireAt: number }
@@ -106,6 +114,11 @@ export function cacheMessage(msg: WAMessage): void {
     for (const [k, v] of msgCache) {
       if (v.expireAt < now) msgCache.delete(k);
     }
+    while (msgCache.size >= MSG_MAX) {
+      const oldest = msgCache.keys().next().value;
+      if (!oldest) break;
+      msgCache.delete(oldest);
+    }
   }
   msgCache.set(id, { msg, expireAt: Date.now() + MSG_TTL });
 }
@@ -115,6 +128,16 @@ export function popCachedMessage(id: string): WAMessage | null {
   if (!entry) return null;
   msgCache.delete(id);
   return entry.expireAt >= Date.now() ? entry.msg : null;
+}
+
+export function getCachedMessage(id: string): WAMessage | null {
+  const entry = msgCache.get(id);
+  if (!entry) return null;
+  if (entry.expireAt < Date.now()) {
+    msgCache.delete(id);
+    return null;
+  }
+  return entry.msg;
 }
 
 // ── LID ↔ JID mapping ─────────────────────────────────────────────────────────

@@ -36,13 +36,50 @@ import {
   handleAutoReply,
   handleSetBadWords,
   handleAntiDelete,
+  handleAntiEdit,
+  handleAntiNudes,
 } from "./commands/group";
 
-const DEFAULT_BAD_WORDS = ["fuck", "shit", "bitch", "asshole", "nigga", "faggot", "cunt"];
-const URL_REGEX = /https?:\/\/[^\s]+|wa\.me\/[^\s]+|t\.me\/[^\s]+/i;
+const DEFAULT_BAD_WORDS = [
+  "fuck", "shit", "bitch", "asshole", "nigga", "faggot", "cunt", "pussy",
+  "whore", "slut", "dick", "cock", "prick", "wanker", "retard", "porn",
+  "malaya", "kumbavu", "mkundu", "mpumbavu", "mshenzi", "shenzi", "nyoko", "mjinga",
+];
+const URL_REGEX = /\b(?:https?:\/\/|www\.|wa\.me\/|t\.me\/|chat\.whatsapp\.com\/|whatsapp\.com\/|telegram\.me\/|discord\.gg\/|discord\.com\/invite\/|instagram\.com\/|tiktok\.com\/|youtube\.com\/|youtu\.be\/|facebook\.com\/|x\.com\/|github\.com\/|bit\.ly\/|tinyurl\.com\/|(?:[a-z0-9-]+\.)+(?:com|net|org|co|io|me|app|dev|info|biz|xyz|site|online|ke|uk|us|gg|ly|tech|store|shop|cloud|ai|tv|live|club|link)(?:\/|\b))/i;
+const linkViolations = new Map<string, { count: number; firstAt: number }>();
+const badWordViolations = new Map<string, { count: number; firstAt: number }>();
+
+function normalizeModerationWord(value: string) {
+  return value
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u200b-\u200f\u202a-\u202e\ufeff]/g, "")
+    .replace(/[013457@$!]/g, (char) => ({ "0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "@": "a", "$": "s", "!": "i" })[char] ?? char)
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/(.)\1+/g, "$1")
+    .trim();
+}
+
+function findBadWord(text: string, words: string[]) {
+  const normalizedTokens = normalizeModerationWord(text)
+    .split(/\s+/)
+    .filter(Boolean);
+  const compactTokens = normalizedTokens.map((token) => token.replace(/[^a-z0-9]/g, ""));
+  for (const word of words) {
+    const normalizedWord = normalizeModerationWord(word);
+    if (!normalizedWord) continue;
+    if (normalizedWord.includes(" ")) {
+      if (normalizeModerationWord(text).includes(normalizedWord)) return word;
+    } else if (compactTokens.includes(normalizedWord)) {
+      return word;
+    }
+  }
+  return null;
+}
 const GROUP_ADMIN_CONTEXT_COMMANDS = new Set([
   "kick", "add", "promote", "demote", "mute", "unmute",
   "antilink", "antibadword", "setbadwords", "antimention", "antidelete",
+  "antiedit", "antinudes",
   "ban", "unban", "setprefix", "tagall", "welcome", "setwelcome", "autoreply",
 ]);
 
@@ -324,7 +361,9 @@ export async function handleMessage(sock: WASocket, msg: WAMessage) {
       ? body.slice(prefix.length).trim().split(/\s+/, 1)[0]?.toLowerCase() ?? ""
       : "";
     const needsGroupAdminContext = GROUP_ADMIN_CONTEXT_COMMANDS.has(commandName);
-    if (needsGroupAdminContext || hasGroupProtection) {
+    // Don't let a cold group-metadata request delay ordinary commands such as
+    // .ping. Moderation still checks metadata on non-command group messages.
+    if (needsGroupAdminContext || (hasGroupProtection && !commandName)) {
       try {
         const groupMeta = await getCachedGroupMeta(sock, jid);
         groupName   = groupMeta.subject;
@@ -341,20 +380,71 @@ export async function handleMessage(sock: WASocket, msg: WAMessage) {
         const msgKey = msg.key as WAMessageKey;
         if (groupSettings) {
           if (groupSettings.antilink && !isOwner && !isSenderGroupAdmin && URL_REGEX.test(body)) {
-            await safeSend(sock, jid, { delete: msgKey });
-            await safeSend(sock, jid, { text: "Links are not allowed in this group." });
+            const violationKey = `${jid}:${realSenderJid}`;
+            const now = Date.now();
+            const previous = linkViolations.get(violationKey);
+            const entry = !previous || now - previous.firstAt > 24 * 60 * 60 * 1000
+              ? { count: 1, firstAt: now }
+              : { count: previous.count + 1, firstAt: previous.firstAt };
+            const count = entry.count;
+            linkViolations.set(violationKey, entry);
+            while (linkViolations.size > 3000) {
+              const oldest = linkViolations.keys().next().value;
+              if (!oldest) break;
+              linkViolations.delete(oldest);
+            }
+            if (isBotGroupAdmin) {
+              await safeSend(sock, jid, { delete: msgKey });
+            }
+            if (count > 1 && isBotGroupAdmin) {
+              await sock.groupParticipantsUpdate(jid, [realSenderJid], "remove");
+              linkViolations.delete(violationKey);
+              await safeSend(sock, jid, {
+                text: `🚫 @${realSenderJid.split("@")[0].split(":")[0]} was removed for posting another link after a warning.`,
+                mentions: [realSenderJid],
+              });
+            } else {
+              await safeSend(sock, jid, {
+                text: isBotGroupAdmin
+                  ? `⚠️ @${realSenderJid.split("@")[0].split(":")[0]}, links are not allowed. This is your first warning. Another link may result in removal.`
+                  : "⚠️ Links are not allowed. Promote the bot to admin so it can delete links or remove repeat offenders.",
+                mentions: [realSenderJid],
+              });
+            }
             return;
           }
           const badWordList = groupSettings.customBadWords
             ? groupSettings.customBadWords.split(",").map((w) => w.trim().toLowerCase()).filter(Boolean)
             : DEFAULT_BAD_WORDS;
-          if (groupSettings.antibadword !== "off" && !isOwner && badWordList.some((w) => body.toLowerCase().includes(w))) {
-            await safeSend(sock, jid, { delete: msgKey });
-            if (groupSettings.antibadword === "kick") {
+          const matchedBadWord = findBadWord(body, badWordList);
+          if (groupSettings.antibadword !== "off" && !isOwner && !isSenderGroupAdmin && matchedBadWord) {
+            const violationKey = `${jid}:${realSenderJid}`;
+            const now = Date.now();
+            const previous = badWordViolations.get(violationKey);
+            const entry = !previous || now - previous.firstAt > 24 * 60 * 60 * 1000
+              ? { count: 1, firstAt: now }
+              : { count: previous.count + 1, firstAt: previous.firstAt };
+            badWordViolations.set(violationKey, entry);
+            while (badWordViolations.size > 3000) {
+              const oldest = badWordViolations.keys().next().value;
+              if (!oldest) break;
+              badWordViolations.delete(oldest);
+            }
+            if (isBotGroupAdmin) await safeSend(sock, jid, { delete: msgKey });
+            if (groupSettings.antibadword === "kick" && entry.count >= 3 && isBotGroupAdmin) {
               await sock.groupParticipantsUpdate(jid, [realSenderJid], "remove");
-              await safeSend(sock, jid, { text: `@${realSenderJid.split("@")[0]} was kicked for bad language.`, mentions: [realSenderJid] });
+              badWordViolations.delete(violationKey);
+              await safeSend(sock, jid, {
+                text: `🚫 @${realSenderJid.split("@")[0]} was removed after three bad-language violations in 24 hours.`,
+                mentions: [realSenderJid],
+              });
             } else {
-              await safeSend(sock, jid, { text: "Bad language is not allowed." });
+              await safeSend(sock, jid, {
+                text: groupSettings.antibadword === "kick"
+                  ? `⚠️ @${realSenderJid.split("@")[0]}, please avoid bad language. Warning ${entry.count}/3 in 24 hours.`
+                  : "Bad language is not allowed.",
+                mentions: [realSenderJid],
+              });
             }
             return;
           }
@@ -498,6 +588,28 @@ export async function handleMessage(sock: WASocket, msg: WAMessage) {
       return;
     }
 
+    case "autoread":
+    case "smartreply": {
+      if (!isOwner) {
+        await safeSend(sock, replyJid, { text: "🚫 Only the owner can change bot-wide features." });
+        return;
+      }
+      const raw = args[0]?.toLowerCase();
+      if (raw !== "on" && raw !== "off") {
+        const settings = getBotSettings();
+        const enabled = command === "autoread" ? settings.autoRead : settings.smartReply;
+        await safeSend(sock, replyJid, {
+          text: `Usage: ${prefix}${command} on | ${prefix}${command} off\nCurrent: ${enabled ? "ON" : "OFF"}`,
+        });
+        return;
+      }
+      const enabled = raw === "on";
+      if (command === "autoread") updateBotSettings({ autoRead: enabled });
+      else updateBotSettings({ smartReply: enabled });
+      await safeSend(sock, replyJid, { text: `${command} is now ${enabled ? "ON" : "OFF"}.` });
+      return;
+    }
+
     case "kick":          return handleKick(sock, patchedMsg, ctx);
     case "add":           return handleAdd(sock, patchedMsg, ctx, args);
     case "promote":       return handlePromote(sock, patchedMsg, ctx);
@@ -507,6 +619,8 @@ export async function handleMessage(sock: WASocket, msg: WAMessage) {
     case "setbadwords":   return handleSetBadWords(sock, patchedMsg, ctx, args);
     case "antimention":   return handleAntimention(sock, patchedMsg, ctx, args);
     case "antidelete":    return handleAntiDelete(sock, patchedMsg, ctx, args);
+    case "antiedit":      return handleAntiEdit(sock, patchedMsg, ctx, args);
+    case "antinudes":     return handleAntiNudes(sock, patchedMsg, ctx, args);
     case "ban":           return handleBan(sock, patchedMsg, ctx);
     case "unban":         return handleUnban(sock, patchedMsg, ctx);
     case "setprefix":     return handleSetPrefix(sock, patchedMsg, ctx, args);

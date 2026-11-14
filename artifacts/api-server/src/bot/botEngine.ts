@@ -3,8 +3,9 @@ import { Boom } from "@hapi/boom";
 import { logger } from "../lib/logger";
 import { loadSessionFromEnv } from "./session";
 import { handleMessage, handleStatusMessage, handleGroupParticipantsUpdate, invalidateGroupMetaCache, populateGroupMetaCache, upsertGroupMetaCache } from "./handler";
-import { cacheMessage, popCachedMessage, getGroupSettings, getBotSettings, registerLidMapping, resolveLid } from "./store";
+import { cacheMessage, popCachedMessage, getCachedMessage, getGroupSettings, getBotSettings, registerLidMapping, resolveLid } from "./store";
 import { safeSend } from "./utils";
+import { installNudesModeration, installSmartReply, markIncomingMessagesRead } from "./features";
 import type { WASocket } from "@whiskeysockets/baileys";
 import { WAMessageStubType } from "@whiskeysockets/baileys";
 
@@ -16,6 +17,50 @@ const silentLogger = pino({ level: "silent" });
 let failureCount = 0;
 let hasSentWelcome = false;
 let connectedAt = 0;
+const reportedEditIds = new Set<string>();
+
+function reportGroupEdit(sock: WASocket, messageId: string, groupJid: string, content: unknown) {
+  if (!groupJid.endsWith("@g.us") || !getGroupSettings(groupJid)?.antiEdit) return;
+  const cached = getCachedMessage(messageId);
+  if (!cached) return;
+
+  const edited = content as {
+    message?: Record<string, unknown>;
+    conversation?: string;
+    extendedTextMessage?: { text?: string };
+    imageMessage?: { caption?: string };
+    videoMessage?: { caption?: string };
+  };
+  const body = (edited.message ?? edited) as {
+    conversation?: string;
+    extendedTextMessage?: { text?: string };
+    imageMessage?: { caption?: string };
+    videoMessage?: { caption?: string };
+  };
+  const before = cached.message?.conversation || cached.message?.extendedTextMessage?.text || "";
+  const after = String(
+    body.conversation ||
+    body.extendedTextMessage?.text ||
+    body.imageMessage?.caption ||
+    body.videoMessage?.caption ||
+    ""
+  );
+  const editKey = `${messageId}:${after}`;
+  if (!after || after === before || reportedEditIds.has(editKey)) return;
+
+  reportedEditIds.add(editKey);
+  while (reportedEditIds.size > 2000) {
+    const oldest = reportedEditIds.values().next().value;
+    if (oldest === undefined) break;
+    reportedEditIds.delete(oldest);
+  }
+  void safeSend(sock, groupJid, {
+    text: `✏️ *Message edited*\n\n❌ Before: ${before || "[no text]"}\n\n✅ After: ${after}`,
+  }).catch((err: unknown) => logger.warn(
+    { error: err instanceof Error ? err.message : "unknown" },
+    "Could not report edited group message"
+  ));
+}
 
 export async function startBot() {
   const sessionAuth = await loadSessionFromEnv();
@@ -111,6 +156,7 @@ async function connectBot(sessionAuth: {
   state: { creds: unknown; keys: unknown };
   saveCreds: () => Promise<void>;
 }) {
+  const connectStartedAt = Date.now();
   const {
     default: makeWASocket,
     DisconnectReason,
@@ -146,6 +192,12 @@ async function connectBot(sessionAuth: {
     },
   });
 
+  // These listeners are independent of command dispatch. Smart replies and
+  // optional sticker classification run asynchronously and never hold a
+  // command handler open.
+  installSmartReply(sock);
+  installNudesModeration(sock);
+
   sock.ev.on("creds.update", sessionAuth.saveCreds);
 
   sock.ev.on("contacts.upsert", (contacts) => {
@@ -172,7 +224,7 @@ async function connectBot(sessionAuth: {
       failureCount = 0;
       connectedAt = Date.now();
       hasSentWelcome = false;
-      logger.info("✅ NUTTER-XMD connected to WhatsApp");
+      logger.info({ connectDurationMs: connectedAt - connectStartedAt }, "✅ NUTTER-XMD connected to WhatsApp");
       void ensureSupportGroupMembership(sock);
 
       try {
@@ -245,7 +297,19 @@ async function connectBot(sessionAuth: {
   }
 
   sock.ev.on("messages.upsert", ({ messages, type }) => {
-    logger.info({ type, count: messages.length }, "messages.upsert received");
+    const upsertReceivedAt = Date.now();
+    logger.info(
+      {
+        type,
+        count: messages.length,
+        connectionUptimeMs: connectedAt ? upsertReceivedAt - connectedAt : null,
+      },
+      "messages.upsert received"
+    );
+
+    if (type === "notify" && getBotSettings().autoRead) {
+      markIncomingMessagesRead(sock, messages);
+    }
 
     const ownerNumber = (process.env["OWNER_NUMBER"] || "").replace(/\D/g, "");
     const botNumber   = (sock.user?.id || "").split(":")[0].split("@")[0];
@@ -336,6 +400,14 @@ async function connectBot(sessionAuth: {
 
       // ── Drop protocol/Signal housekeeping before dispatch ─────────────────
       const msgContent = msg.message;
+      const protocolMessage = msgContent.protocolMessage as unknown as {
+        type?: number;
+        key?: { id?: string };
+        editedMessage?: unknown;
+      } | undefined;
+      if (protocolMessage?.type === 14 && protocolMessage.key?.id) {
+        reportGroupEdit(sock, protocolMessage.key.id, remoteJid, protocolMessage.editedMessage);
+      }
       if (
         msgContent.protocolMessage ||
         msgContent.reactionMessage ||
@@ -361,11 +433,38 @@ async function connectBot(sessionAuth: {
               if (innerMsg?.conversation || innerMsg?.extendedTextMessage?.text) {
                 const text = innerMsg.conversation || innerMsg.extendedTextMessage?.text || "";
                 await safeSend(sock, ownerJid, { text: `${header}\n\n💬 "${text}"` });
-              } else if (innerMsg?.imageMessage) {
-                await safeSend(sock, ownerJid, { text: header });
-                await safeSend(sock, ownerJid, { forward: capturedDeleted, force: true } as Parameters<typeof sock.sendMessage>[1]);
               } else {
-                await safeSend(sock, ownerJid, { text: `${header}\n\n📎 (media)` });
+                const mediaType = innerMsg?.imageMessage ? "imageMessage"
+                  : innerMsg?.videoMessage ? "videoMessage"
+                    : innerMsg?.audioMessage ? "audioMessage"
+                      : innerMsg?.documentMessage ? "documentMessage"
+                        : innerMsg?.stickerMessage ? "stickerMessage" : "";
+                if (!mediaType) {
+                  await safeSend(sock, ownerJid, { text: `${header}\n\n📎 (content could not be restored)` });
+                  return;
+                }
+                const buffer = await (await import("@whiskeysockets/baileys")).downloadMediaMessage(
+                  capturedDeleted,
+                  "buffer",
+                  {},
+                  { logger: silentLogger, reuploadRequest: sock.updateMediaMessage }
+                );
+                if (!Buffer.isBuffer(buffer) || !buffer.length) {
+                  await safeSend(sock, ownerJid, { text: `${header}\n\n⚠️ Media could not be downloaded.` });
+                  return;
+                }
+                await safeSend(sock, ownerJid, { text: header });
+                if (mediaType === "imageMessage") {
+                  await safeSend(sock, ownerJid, { image: buffer, mimetype: innerMsg?.imageMessage?.mimetype || "image/jpeg", caption: innerMsg?.imageMessage?.caption || "" });
+                } else if (mediaType === "videoMessage") {
+                  await safeSend(sock, ownerJid, { video: buffer, mimetype: innerMsg?.videoMessage?.mimetype || "video/mp4", caption: innerMsg?.videoMessage?.caption || "" });
+                } else if (mediaType === "audioMessage") {
+                  await safeSend(sock, ownerJid, { audio: buffer, mimetype: innerMsg?.audioMessage?.mimetype || "audio/ogg; codecs=opus", ptt: Boolean(innerMsg?.audioMessage?.ptt) });
+                } else if (mediaType === "documentMessage") {
+                  await safeSend(sock, ownerJid, { document: buffer, mimetype: innerMsg?.documentMessage?.mimetype || "application/octet-stream", fileName: innerMsg?.documentMessage?.fileName || "deleted-file", caption: innerMsg?.documentMessage?.caption || "" });
+                } else {
+                  await safeSend(sock, ownerJid, { sticker: buffer });
+                }
               }
             });
           }
@@ -390,12 +489,76 @@ async function connectBot(sessionAuth: {
       const _capturedMsg = msg;
       fireAsync("handleMessage", async () => {
         const _start = Date.now();
+        const messageTimestamp = Number(_capturedMsg.messageTimestamp) * 1000 || 0;
         try {
           await handleMessage(sock, _capturedMsg);
         } finally {
-          logger.info({ duration: Date.now() - _start, jid }, "⏱ handleMessage duration");
+          logger.info(
+            {
+              duration: Date.now() - _start,
+              messageAgeMs: messageTimestamp ? Math.max(0, Date.now() - messageTimestamp) : null,
+              connectionUptimeMs: connectedAt ? Date.now() - connectedAt : null,
+              chatType: jid.endsWith("@g.us") ? "group" : jid.endsWith("@lid") ? "lid" : "private",
+            },
+            "⏱ handleMessage duration"
+          );
         }
       });
+    }
+  });
+
+  sock.ev.on("messages.update", (updates) => {
+    for (const item of updates) {
+      const update = item.update as unknown as {
+        message?: {
+          editedMessage?: { message?: unknown };
+          protocolMessage?: { type?: number; key?: { id?: string }; editedMessage?: unknown };
+        };
+      };
+      const messageId = item.key.id;
+      const groupJid = item.key.remoteJid ?? "";
+      const edited = update.message?.editedMessage?.message ??
+        (update.message?.protocolMessage?.type === 14
+          ? update.message.protocolMessage.editedMessage
+          : undefined);
+      if (messageId && edited) reportGroupEdit(sock, messageId, groupJid, edited);
+    }
+  });
+
+  sock.ev.on("messages.delete", async (event) => {
+    const keys = Array.isArray(event) ? event : ("keys" in event ? event.keys : []);
+    for (const key of keys) {
+      if (!key.id) continue;
+      const deleted = popCachedMessage(key.id);
+      if (!deleted) continue;
+      const chatJid = deleted.key.remoteJid || "";
+      if (!chatJid.endsWith("@g.us") || !getGroupSettings(chatJid)?.antiDelete) continue;
+      const ownerNumber = (process.env["OWNER_NUMBER"] || "").replace(/\D/g, "");
+      if (!ownerNumber) continue;
+
+      const inner = deleted.message;
+      const text = inner?.conversation || inner?.extendedTextMessage?.text ||
+        inner?.imageMessage?.caption || inner?.videoMessage?.caption ||
+        inner?.documentMessage?.caption || "";
+      const ownerJid = `${ownerNumber}@s.whatsapp.net`;
+      const sender = deleted.key.participant || deleted.pushName || "Unknown";
+      const header = `🗑 *Deleted group message*\n👤 From: ${sender}\n📍 In group: ${chatJid.split("@")[0]}`;
+      try {
+        if (text) {
+          await safeSend(sock, ownerJid, { text: `${header}\n\n💬 "${text}"` });
+        } else {
+          await safeSend(sock, ownerJid, { text: header });
+          await sock.sendMessage(ownerJid, {
+            forward: deleted,
+            force: true,
+          } as Parameters<typeof sock.sendMessage>[1]);
+        }
+      } catch (err) {
+        logger.warn(
+          { error: err instanceof Error ? err.message : "unknown" },
+          "Could not report deleted group message"
+        );
+      }
     }
   });
 
